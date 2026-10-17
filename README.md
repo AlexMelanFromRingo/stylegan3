@@ -92,7 +92,7 @@ everything works, training is slower. Set `STYLEGAN_CUSTOM_OPS=off` to skip the 
 to fail instead of falling back. On Windows, install [Visual Studio Community Edition](https://visualstudio.microsoft.com/vs/)
 with the C++ workload and the [CUDA toolkit](https://developer.nvidia.com/cuda-downloads) to use the kernels.
 
-* Docker and conda still work ([Dockerfile](./Dockerfile), [environment.yml](./environment.yml)), but are not needed.
+* Docker is an option for a fully pinned environment, see [Docker](#getting-started) below; conda still works ([environment.yml](./environment.yml)). Neither is needed.
 
 See [Troubleshooting](./docs/troubleshooting.md) for help on common installation and run-time problems.
 
@@ -112,27 +112,38 @@ python gen_video.py --output=lerp.mp4 --trunc=1 --seeds=0-31 --grid=4x2 \
 
 Outputs from the above commands are placed under `out/*.png`, controlled by `--outdir`. Downloaded network pickles are cached under `$HOME/.cache/dnnlib`, which can be overridden by setting the `DNNLIB_CACHE_DIR` environment variable. The default PyTorch extension build directory is `$HOME/.cache/torch_extensions`, which can be overridden by setting `TORCH_EXTENSIONS_DIR`.
 
-**Docker**: You can run the above curated image example using Docker as follows:
+**Docker** (optional): the image pins every dependency - Python 3.12, PyTorch 2.14 and CUDA 13.4 from
+`nvcr.io/nvidia/pytorch:26.09-py3`, the compiler for the custom kernels (nvcc 13.4), and the remaining packages in
+[docker/requirements.lock](./docker/requirements.lock). It needs an NVIDIA driver with CUDA 13.4 support and the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+for `--gpus` (on WSL2: inside the Linux distribution, Docker Engine or Docker Desktop).
 
 ```.bash
-# Build the stylegan3:latest image
 docker build --tag stylegan3 .
 
-# Run the gen_images.py script using Docker:
-docker run --gpus all -it --rm --user $(id -u):$(id -g) \
-    -v `pwd`:/scratch --workdir /scratch -e HOME=/scratch \
+docker run --gpus all -it --rm --ipc=host --user $(id -u):$(id -g) \
+    -v `pwd`:/workspace -e HOME=/workspace/.docker-home \
     stylegan3 \
     python gen_images.py --outdir=out --trunc=1 --seeds=2 \
          --network=https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-afhqv2-512x512.pkl
 ```
 
-Note: The Docker image requires NVIDIA driver release `r470` or later.
+- `--user $(id -u):$(id -g)` writes the outputs as your user instead of root; `-v `pwd`:/workspace` mounts this
+  repository as the working directory.
+- `-e HOME=/workspace/.docker-home` keeps the downloaded pickles (`~/.cache/dnnlib`) and the compiled kernels
+  (`~/.cache/torch_extensions`) between runs; `DNNLIB_CACHE_DIR` and `TORCH_EXTENSIONS_DIR` set them separately.
+- `--ipc=host` gives the training data loader enough shared memory.
+- Datasets and results outside the repository need their own `-v host_path:container_path`.
 
-The `docker run` invocation may look daunting, so let's unpack its contents here:
+The visualizer runs in the container on Linux with X11 and on WSL2 with WSLg (OpenGL through the GPU's D3D12 driver):
 
-- `--gpus all -it --rm --user $(id -u):$(id -g)`: with all GPUs enabled, run an interactive session with current user's UID/GID to avoid Docker writing files as root.
-- ``-v `pwd`:/scratch --workdir /scratch``: mount current running dir (e.g., the top of this git repo on your host machine) to `/scratch` in the container and use that as the current working dir.
-- `-e HOME=/scratch`: let PyTorch and StyleGAN3 code know where to cache temporary files such as pre-trained models and custom PyTorch extension build results. Note: if you want more fine-grained control, you can instead set `TORCH_EXTENSIONS_DIR` (for custom extensions build dir) and `DNNLIB_CACHE_DIR` (for pre-trained model download cache). You want these cache dirs to reside on persistent volumes so that their contents are retained across multiple `docker run` invocations.
+```.bash
+docker run --gpus all -it --rm --ipc=host --user $(id -u):$(id -g) \
+    -v `pwd`:/workspace -e HOME=/workspace/.docker-home \
+    -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+    `# WSL2 only:` -v /mnt/wslg:/mnt/wslg --device /dev/dxg -v /usr/lib/wsl:/usr/lib/wsl:ro -e LD_LIBRARY_PATH=/usr/lib/wsl/lib \
+    stylegan3 python visualizer.py
+```
 
 ## Interactive visualization
 

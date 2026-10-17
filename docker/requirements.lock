@@ -1,0 +1,9 @@
+# Exact versions installed on top of nvcr.io/nvidia/pytorch:26.09-py3 (Python 3.12.3, PyTorch 2.14.0a0, CUDA 13.4).
+# Everything else in requirements.txt (numpy, scipy, click, pillow, requests, tqdm, psutil, ninja, matplotlib) is
+# already in the image, at the versions NVIDIA tested it with. Regenerate together with the FROM line of the Dockerfile.
+ImageIO==2.38.1
+PyOpenGL==3.1.10
+glfw==2.11.0
+imageio-ffmpeg==0.6.0
+imgui-bundle==1.92.900
+pyspng==0.1.4

@@ -1,0 +1,7 @@
+.git
+**/__pycache__
+.docker-home
+out
+training-runs
+*.pkl
+*.zip

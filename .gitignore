@@ -4,3 +4,4 @@ _screenshots/
 imgui.ini
 .venv/
 venv/
+.docker-home/
