@@ -1,14 +1,14 @@
-## Alias-Free Generative Adversarial Networks (StyleGAN3)<br><sub>Official PyTorch implementation of the NeurIPS 2021 paper</sub>
+## StyleGAN3, modernized<br><sub>A maintained fork of the official PyTorch implementation of the NeurIPS 2021 paper, for current Python, PyTorch and CUDA</sub>
 
 ![Teaser image](./docs/stylegan3-teaser-1920x1006.png)
 
 **Alias-Free Generative Adversarial Networks**<br>
 Tero Karras, Miika Aittala, Samuli Laine, Erik H&auml;rk&ouml;nen, Janne Hellsten, Jaakko Lehtinen, Timo Aila<br>
-https://nvlabs.github.io/stylegan3<br>
+Paper and project page: https://nvlabs.github.io/stylegan3 &middot; original code: https://github.com/NVlabs/stylegan3 &middot; this fork: https://github.com/AlexMelanFromRingo/stylegan3<br>
 
 Abstract: *We observe that despite their hierarchical convolutional nature, the synthesis process of typical generative adversarial networks depends on absolute pixel coordinates in an unhealthy manner. This manifests itself as, e.g., detail appearing to be glued to image coordinates instead of the surfaces of depicted objects. We trace the root cause to careless signal processing that causes aliasing in the generator network. Interpreting all signals in the network as continuous, we derive generally applicable, small architectural changes that guarantee that unwanted information cannot leak into the hierarchical synthesis process. The resulting networks match the FID of StyleGAN2 but differ dramatically in their internal representations, and they are fully equivariant to translation and rotation even at subpixel scales. Our results pave the way for generative models better suited for video and animation.*
 
-For business inquiries, please visit our website and submit the form: [NVIDIA Research Licensing](https://www.nvidia.com/en-us/research/inquiries/)
+The code remains under the NVIDIA Source Code License (non-commercial). For commercial licensing of the original code, NVIDIA's form is at [NVIDIA Research Licensing](https://www.nvidia.com/en-us/research/inquiries/).
 
 ## About this fork
 
@@ -336,7 +336,7 @@ python avg_spectra.py slices tmp/training-data.npz tmp/stylegan3-r.npz
 
 Copyright &copy; 2021, NVIDIA Corporation & affiliates. All rights reserved.
 
-This work is made available under the [Nvidia Source Code License](https://github.com/NVlabs/stylegan3/blob/main/LICENSE.txt).
+This work is made available under the [Nvidia Source Code License](./LICENSE.txt), the license of the original code; the changes of this fork are under the same license.
 
 ## Citation
 
