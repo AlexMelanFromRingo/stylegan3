@@ -293,23 +293,24 @@ def _upfirdn2d_pass(x, f, up, down, pad0, pad1, gain, dim):
     kh, kw = w.shape
     (uy, ux), (dy, dx), (py0, px0), (py1, px1) = up, down, pad0, pad1
 
-    # Every channel is filtered with the same kernel: fold the channels into the batch dimension.
-    x = x.reshape(batch_size * num_channels, 1, in_height, in_width)
     w = (w * gain).to(x.dtype)[np.newaxis, np.newaxis]
 
     if uy == ux == 1:
+        # Depthwise convolution: returns a new tensor of the final shape (the output of a custom op must not be a view).
         x = torch.nn.functional.pad(x, [px0, px1, py0, py1])
-        x = torch.nn.functional.conv2d(x, w, stride=[dy, dx])
-    else:
-        # Compute the full upsampled output (of a transposed convolution), then shift it to the requested padding.
-        out_h = in_height * uy + py0 + py1 - kh + 1
-        out_w = in_width * ux + px0 + px1 - kw + 1
-        x = _polyphase_conv_transpose2d(x, w[0, 0].flip([0, 1]), uy, ux)
-        sy, sx = kh - 1 - py0, kw - 1 - px0
-        x = torch.nn.functional.pad(x, [-sx, out_w + sx - x.shape[3], -sy, out_h + sy - x.shape[2]])
-        if dy > 1 or dx > 1:
-            x = x[:, :, ::dy, ::dx]
-    return x.reshape(batch_size, num_channels, *x.shape[2:])
+        return torch.nn.functional.conv2d(x, w.expand(num_channels, 1, kh, kw).contiguous(), stride=[dy, dx], groups=num_channels)
+
+    # Compute the full upsampled output (of a transposed convolution), then shift it to the requested padding.
+    # Every channel is filtered with the same kernel: the channels are folded into the batch dimension.
+    out_h = in_height * uy + py0 + py1 - kh + 1
+    out_w = in_width * ux + px0 + px1 - kw + 1
+    x = _polyphase_conv_transpose2d(x.reshape(batch_size * num_channels, 1, in_height, in_width), w[0, 0].flip([0, 1]), uy, ux)
+    x = x.reshape(batch_size, num_channels, *x.shape[2:])
+    sy, sx = kh - 1 - py0, kw - 1 - px0
+    x = torch.nn.functional.pad(x, [-sx, out_w + sx - x.shape[3], -sy, out_h + sy - x.shape[2]])
+    if dy > 1 or dx > 1:
+        x = x[:, :, ::dy, ::dx]
+    return x
 
 def _polyphase_conv_transpose2d(x, w, uy, ux):
     """`conv_transpose2d(x, w, stride=[uy, ux])` for a single channel `x` of shape [N, 1, H, W] and a kernel `w` of shape [kh, kw],
@@ -379,6 +380,8 @@ def _upfirdn2d_native(up=1, down=1, padding=0, flip_filter=False, gain=1):
                 f = f.square().unsqueeze(0) # Convert separable-1 into full-1x1.
             assert isinstance(f, torch.Tensor) and f.ndim in [1, 2]
             y = _upfirdn2d_conv(x, f, up=[upx, upy], down=[downx, downy], padding=[padx0, padx1, pady0, pady1], flip_filter=flip_filter, gain=gain)
+            if y._base is not None or y is x:
+                y = y.clone() # The output of a custom op must not be a view, the networks modify it in place.
             ctx.save_for_backward(f)
             ctx.x_shape = x.shape
             return y

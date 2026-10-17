@@ -57,6 +57,9 @@ fused CUDA kernel, which keeps the 4-16x larger intermediate images in on-chip m
 | training, batch 16 (`--batch-gpu=8`) | ~66 s/kimg, 5.6 GB | ~277 s/kimg, 7.8 GB |
 | generation, batch 1 | 14.6 ms | 35 ms |
 | generation, batch 1, StyleGAN3-R | 16.5 ms | 61 ms |
+| training StyleGAN2 config 256x256, batch 16 (`--batch-gpu=8`) | ~42 s/kimg | ~50 s/kimg |
+
+The StyleGAN2 networks do not use `filtered_lrelu`, so the native ops cost them little.
 
 ## Training speed and memory
 
