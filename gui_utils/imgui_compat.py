@@ -14,7 +14,12 @@ maintained and ships wheels for Linux, Windows and macOS. Importing this module 
 the widgets keep their pyimgui style calls."""
 
 import numpy as np
-from imgui_bundle import imgui as _imgui
+
+try:
+    from imgui_bundle import imgui as _imgui
+except ImportError as e:
+    raise ImportError('the visualizer needs imgui-bundle 1.92 or later (Python 3.11+): pip install "imgui-bundle>=1.92" '
+                      'glfw pyopengl') from e
 
 ImVec2 = _imgui.ImVec2
 ImVec4 = _imgui.ImVec4

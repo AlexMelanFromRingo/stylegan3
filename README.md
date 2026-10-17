@@ -69,7 +69,7 @@ While new generator approaches enable new media synthesis capabilities, they may
 ## Requirements
 
 * Linux, Windows or WSL2 and an NVIDIA GPU. A single GPU with 8 GB of memory is enough for 256x256 models (see [Training](#training)).
-* 64-bit Python 3.9 &ndash; 3.13 and PyTorch 2.1 or later.
+* 64-bit Python 3.9 &ndash; 3.13 (the visualizer needs 3.11 or later) and PyTorch 2.1 or later.
 * Python libraries: [requirements.txt](./requirements.txt).
 
 ```.bash
