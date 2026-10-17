@@ -19,6 +19,17 @@ repeated runs.
 | `cpp_extension.load()` of recent PyTorch versions does not register the module, the plugin import failed after a successful build | the returned module is used |
 | pinned 2021 versions (`environment.yml`, Docker image 21.08) | `requirements.txt` with lower bounds only |
 
+## Platforms
+
+| Platform | Tested with | Result |
+|---|---|---|
+| WSL2 (Ubuntu 24.04) | Python 3.12, PyTorch 2.14 + CUDA 13.0, kernels from the pip CUDA toolkit | training, metrics, visualizer |
+| Docker on WSL2 | `nvcr.io/nvidia/pytorch:26.09-py3` (PyTorch 2.14, CUDA 13.4) + NVIDIA Container Toolkit | generation with the kernels, OpenGL on the GPU through WSLg |
+| Windows 11 | Python 3.10, PyTorch 2.11 + CUDA 12.8, CUDA toolkit 12.8, Visual Studio 2022 (MSVC 14.44) | the kernels compile, generated images match WSL (mean difference 0.04 / 255) |
+
+On Python 3.10 the visualizer is not available: imgui-bundle 1.92, whose API it uses, has wheels for Python 3.11+ only, so
+`requirements.txt` installs the visualizer packages only there.
+
 ## Runtime fixes
 
 - Training: `torch.utils.data.Sampler.__init__` no longer accepts the dataset (`InfiniteSampler`), and `torch.optim.Adam`
