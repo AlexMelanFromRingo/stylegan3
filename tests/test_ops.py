@@ -98,3 +98,35 @@ def test_helpers():
     assert dnnlib.util.strtobool('Yes') and not dnnlib.util.strtobool('off')
     with pytest.raises(ValueError):
         dnnlib.util.strtobool('maybe')
+
+def _fake_cuda_env(root):
+    # the layout of the nvidia-* pip packages: <site>/nvidia/cu13/{bin/nvcc, include, lib}
+    pkg = root / 'nvidia' / 'cu13'
+    (pkg / 'bin').mkdir(parents=True)
+    (pkg / 'include').mkdir()
+    (pkg / 'lib').mkdir()
+    nvcc = pkg / 'bin' / 'nvcc'
+    nvcc.write_text('#!/bin/sh\n')
+    nvcc.chmod(0o755)
+    (pkg / 'include' / 'cuda.h').write_text('')
+    return str(root)
+
+@pytest.mark.skipif(os.name == 'nt', reason='the pip CUDA_HOME is assembled on Linux only')
+def test_pip_cuda_home_follows_the_environment(tmp_path, monkeypatch):
+    # The assembled CUDA_HOME is made of symlinks into one Python environment. When that environment is deleted (e.g.
+    # it lived in /tmp, which is wiped at boot), another environment must get a working CUDA_HOME, not the stale one.
+    from torch_utils import custom_ops
+    monkeypatch.setattr(custom_ops, '_nvcc_version', lambda path: (13, 0))
+    monkeypatch.setattr(custom_ops, '_torch_cuda_version', lambda: (13, 0))
+    monkeypatch.setattr(torch.utils.cpp_extension, '_get_build_directory', lambda name, verbose: str(tmp_path / 'build' / name))
+    env_a = _fake_cuda_env(tmp_path / 'a')
+    monkeypatch.setattr(sys, 'path', [env_a])
+    home_a = custom_ops._pip_cuda_home()
+    assert os.path.realpath(os.path.join(home_a, 'bin', 'nvcc')).startswith(os.path.realpath(env_a))
+    import shutil
+    shutil.rmtree(env_a)
+    env_b = _fake_cuda_env(tmp_path / 'b')
+    monkeypatch.setattr(sys, 'path', [env_b])
+    home_b = custom_ops._pip_cuda_home()
+    assert os.path.isfile(os.path.join(home_b, 'bin', 'nvcc'))
+    assert os.path.realpath(os.path.join(home_b, 'bin', 'nvcc')).startswith(os.path.realpath(env_b))

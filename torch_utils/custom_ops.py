@@ -87,12 +87,16 @@ def _pip_cuda_home():
             version = _nvcc_version(nvcc)
             if version is None or version[0] != _torch_cuda_version()[0]:
                 continue
-            home = os.path.join(torch.utils.cpp_extension._get_build_directory('cuda_home', verbose=False), f'{version[0]}.{version[1]}') # pylint: disable=protected-access
-            if not os.path.isfile(os.path.join(home, 'bin', 'nvcc')):
+            # one CUDA_HOME per environment: it is made of symlinks into this environment's site-packages
+            nvcc_root = os.path.dirname(os.path.dirname(nvcc))
+            key = hashlib.sha1(os.path.realpath(nvcc_root).encode()).hexdigest()[:10]
+            home = os.path.join(torch.utils.cpp_extension._get_build_directory('cuda_home', verbose=False), f'{version[0]}.{version[1]}-{key}') # pylint: disable=protected-access
+            if os.path.realpath(os.path.join(home, 'bin', 'nvcc')) != os.path.realpath(nvcc):
+                if os.path.lexists(home):  # stale (the environment was moved or deleted) or incomplete
+                    shutil.rmtree(home, ignore_errors=True)
                 tmp = f'{home}-tmp-{uuid.uuid4().hex}'
                 for sub in ['include', 'lib64']:
                     os.makedirs(os.path.join(tmp, sub))
-                nvcc_root = os.path.dirname(os.path.dirname(nvcc))
                 os.symlink(os.path.join(nvcc_root, 'bin'), os.path.join(tmp, 'bin'))
                 if os.path.isdir(os.path.join(nvcc_root, 'nvvm')):
                     os.symlink(os.path.join(nvcc_root, 'nvvm'), os.path.join(tmp, 'nvvm'))
