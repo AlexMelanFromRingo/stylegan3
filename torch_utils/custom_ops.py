@@ -64,8 +64,7 @@ def _get_mangled_gpu_name():
 #----------------------------------------------------------------------------
 # CUDA toolkit discovery. The kernels have to be compiled with a CUDA toolkit whose major version matches the one
 # PyTorch was built with. When the system toolkit is missing or does not match, the toolkit published by NVIDIA as pip
-# packages (e.g. `pip install "nvidia-cuda-nvcc==13.0.*" "nvidia-cuda-cccl==13.0.*"` for a PyTorch built with CUDA 13.0)
-# is used instead, without any system wide installation.
+# packages is used instead, without any system wide installation - see pip_toolkit_command() for the exact command.
 
 def _nvcc_version(nvcc):
     try:
@@ -114,6 +113,15 @@ def _pip_cuda_home():
             return home
     return None
 
+def pip_toolkit_command():
+    """The pip command that installs a CUDA toolkit matching the CUDA version of the installed PyTorch (Linux)."""
+    major, minor = _torch_cuda_version()
+    if major >= 13:
+        packages = ['nvidia-cuda-nvcc', 'nvidia-nvvm', 'nvidia-cuda-crt', 'nvidia-cuda-cccl']
+        return 'pip install ' + ' '.join(f'"{p}=={major}.{minor}.*"' for p in packages)
+    packages = ['nvidia-cuda-nvcc', 'nvidia-cuda-cccl', 'nvidia-cuda-runtime']
+    return 'pip install ' + ' '.join(f'"{p}-cu{major}=={major}.{minor}.*"' for p in packages)
+
 def _setup_build_tools():
     # ninja from the pip package, also when the python environment is not activated
     if shutil.which('ninja') is None:
@@ -133,9 +141,9 @@ def _setup_build_tools():
         os.environ['CUDA_HOME'] = pip_home
         torch.utils.cpp_extension.CUDA_HOME = pip_home
     elif system_version is None:
-        raise RuntimeError(f'No CUDA toolkit found. Install the CUDA {torch.version.cuda} toolkit, or `pip install "nvidia-cuda-nvcc=={torch.version.cuda}.*" "nvidia-cuda-cccl=={torch.version.cuda}.*"` (Linux)')
+        raise RuntimeError(f'No CUDA toolkit found. Install the CUDA {torch.version.cuda} toolkit, or on Linux: {pip_toolkit_command()}')
     else:
-        raise RuntimeError(f'The CUDA toolkit in {cuda_home} is version {system_version[0]}.{system_version[1]}, but PyTorch was built with CUDA {torch.version.cuda}. Install a matching toolkit, or `pip install "nvidia-cuda-nvcc=={torch.version.cuda}.*" "nvidia-cuda-cccl=={torch.version.cuda}.*"` (Linux)')
+        raise RuntimeError(f'The CUDA toolkit in {cuda_home} is version {system_version[0]}.{system_version[1]}, but PyTorch was built with CUDA {torch.version.cuda}. Install a matching toolkit, or on Linux: {pip_toolkit_command()}')
 
 #----------------------------------------------------------------------------
 # Main entry point for compiling and loading C++/CUDA plugins.

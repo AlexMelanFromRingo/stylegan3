@@ -1,0 +1,26 @@
+# Python 3.9 - 3.13. Install PyTorch with CUDA first if the default wheel of your platform does not include it
+# (Windows: see https://pytorch.org/get-started/locally/), then: pip install -r requirements.txt
+torch>=2.1
+numpy>=1.22
+scipy>=1.9
+click>=8.0
+pillow>=9.0
+requests
+tqdm
+psutil
+ninja                   # builds the optional custom CUDA kernels
+pyspng                  # faster PNG decoding for training (optional)
+imageio>=2.20
+imageio-ffmpeg          # gen_video.py
+matplotlib>=3.5         # visualizer.py, avg_spectra.py
+
+# visualizer.py
+imgui-bundle>=1.6
+glfw>=2.6
+pyopengl>=3.1.6
+
+# The custom CUDA kernels make training ~4x faster. They are compiled on first use, which needs a CUDA toolkit matching
+# the CUDA version of PyTorch and a C++ compiler. On Linux the toolkit can come from pip - for a PyTorch built with
+# CUDA 13.0 (check with: python -c "import torch; print(torch.version.cuda)"):
+#   pip install "nvidia-cuda-nvcc==13.0.*" "nvidia-nvvm==13.0.*" "nvidia-cuda-crt==13.0.*" "nvidia-cuda-cccl==13.0.*"
+# Without them, native PyTorch implementations are used (and a warning tells which command to run).

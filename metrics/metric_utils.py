@@ -39,6 +39,29 @@ _feature_detector_cache = dict()
 def get_feature_detector_name(url):
     return os.path.splitext(url.split('/')[-1])[0]
 
+class DINOv2Detector(torch.nn.Module):
+    """DINOv2 image features (the class token of ViT-L/14) for FD_DINOv2, from "Exposing flaws of generative model evaluation
+    metrics and their unfair treatment of diffusion models" (Stein et al., NeurIPS 2023). Like the other detectors, it takes uint8
+    images of any resolution, and applies the preprocessing of the reference implementation (dgm-eval): bicubic resize to 224x224
+    and ImageNet normalization."""
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).reshape(1, 3, 1, 1))
+
+    def forward(self, x, **_kwargs):
+        x = x.to(torch.float32) / 255
+        x = torch.nn.functional.interpolate(x, size=(224, 224), mode='bicubic', antialias=True, align_corners=False)
+        x = (x - self.mean) / self.std
+        return self.model(x)
+
+def _load_torchhub_detector(url):
+    # torchhub://<repo owner>/<repo name>/<model>, e.g. torchhub://facebookresearch/dinov2/dinov2_vitl14
+    owner, repo, model = url[len('torchhub://'):].split('/')
+    model = torch.hub.load(f'{owner}/{repo}', model, trust_repo=True, verbose=False).eval().requires_grad_(False)
+    return DINOv2Detector(model)
+
 def get_feature_detector(url, device=torch.device('cpu'), num_gpus=1, rank=0, verbose=False):
     assert 0 <= rank < num_gpus
     key = (url, device)
@@ -46,8 +69,11 @@ def get_feature_detector(url, device=torch.device('cpu'), num_gpus=1, rank=0, ve
         is_leader = (rank == 0)
         if not is_leader and num_gpus > 1:
             torch.distributed.barrier() # leader goes first
-        with dnnlib.util.open_url(url, verbose=(verbose and is_leader)) as f:
-            _feature_detector_cache[key] = pickle.load(f).to(device)
+        if url.startswith('torchhub://'):
+            _feature_detector_cache[key] = _load_torchhub_detector(url).to(device)
+        else:
+            with dnnlib.util.open_url(url, verbose=(verbose and is_leader)) as f:
+                _feature_detector_cache[key] = pickle.load(f).to(device)
         if is_leader and num_gpus > 1:
             torch.distributed.barrier() # others follow
     return _feature_detector_cache[key]

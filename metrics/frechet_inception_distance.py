@@ -50,3 +50,24 @@ def compute_fid(opts, max_real, num_gen):
     return frechet_distance(mu_gen, sigma_gen, mu_real, sigma_real)
 
 #----------------------------------------------------------------------------
+
+#----------------------------------------------------------------------------
+# Frechet distance in the feature space of DINOv2 ViT-L/14 instead of Inception-v3 (FD_DINOv2, Stein et al. 2023),
+# which agrees much better with human judgments of image quality. Values are not comparable to FID.
+
+def compute_fd_dinov2(opts, max_real, num_gen):
+    detector_url = 'torchhub://facebookresearch/dinov2/dinov2_vitl14'
+
+    mu_real, sigma_real = metric_utils.compute_feature_stats_for_dataset(
+        opts=opts, detector_url=detector_url, detector_kwargs={},
+        rel_lo=0, rel_hi=0, capture_mean_cov=True, max_items=max_real).get_mean_cov()
+
+    mu_gen, sigma_gen = metric_utils.compute_feature_stats_for_generator(
+        opts=opts, detector_url=detector_url, detector_kwargs={},
+        rel_lo=0, rel_hi=1, capture_mean_cov=True, max_items=num_gen).get_mean_cov()
+
+    if opts.rank != 0:
+        return float('nan')
+    return frechet_distance(mu_gen, sigma_gen, mu_real, sigma_real)
+
+#----------------------------------------------------------------------------

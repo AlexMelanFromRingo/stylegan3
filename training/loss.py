@@ -138,3 +138,74 @@ class StyleGAN2Loss(Loss):
                 (loss_Dreal + loss_Dr1).mean().mul(gain).backward()
 
 #----------------------------------------------------------------------------
+
+#----------------------------------------------------------------------------
+# Relativistic pairing GAN loss with zero-centered gradient penalties on both the real (R1) and the generated (R2) images,
+# from "The GAN is dead; long live the GAN! A Modern GAN Baseline" (R3GAN, Huang et al., NeurIPS 2024).
+# Every generated image is scored relative to a real image of the minibatch, which addresses mode dropping, and the
+# loss has local convergence guarantees with R1 + R2. The penalties use the same weight (gamma) and the same lazy
+# regularization as R1 in StyleGAN2Loss. Only the loss is taken from R3GAN, the architectures stay those of StyleGAN.
+
+class RpGANLoss(StyleGAN2Loss):
+    def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, gain, cur_nimg):
+        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
+        if self.pl_weight == 0:
+            phase = {'Greg': 'none', 'Gboth': 'Gmain'}.get(phase, phase)
+        if self.r1_gamma == 0:
+            phase = {'Dreg': 'none', 'Dboth': 'Dmain'}.get(phase, phase)
+        blur_sigma = max(1 - cur_nimg / (self.blur_fade_kimg * 1e3), 0) * self.blur_init_sigma if self.blur_fade_kimg > 0 else 0
+
+        # Gmain: make the generated images score higher than their paired real images.
+        if phase in ['Gmain', 'Gboth']:
+            with torch.autograd.profiler.record_function('Gmain_forward'):
+                gen_img, _gen_ws = self.run_G(gen_z, gen_c)
+                gen_logits = self.run_D(gen_img, gen_c, blur_sigma=blur_sigma)
+                with torch.no_grad():
+                    real_logits = self.run_D(real_img, real_c, blur_sigma=blur_sigma)
+                training_stats.report('Loss/scores/fake', gen_logits)
+                training_stats.report('Loss/signs/fake', gen_logits.sign())
+                loss_Gmain = torch.nn.functional.softplus(real_logits - gen_logits)
+                training_stats.report('Loss/G/loss', loss_Gmain)
+            with torch.autograd.profiler.record_function('Gmain_backward'):
+                loss_Gmain.mean().mul(gain).backward()
+
+        # Path length regularization (StyleGAN2 config only).
+        if phase in ['Greg', 'Gboth']:
+            super().accumulate_gradients('Greg', real_img, real_c, gen_z, gen_c, gain, cur_nimg)
+
+        # Dmain: make the real images score higher than their paired generated images.
+        if phase in ['Dmain', 'Dboth']:
+            with torch.autograd.profiler.record_function('Dmain_forward'):
+                gen_img, _gen_ws = self.run_G(gen_z, gen_c, update_emas=True)
+                gen_logits = self.run_D(gen_img, gen_c, blur_sigma=blur_sigma, update_emas=True)
+                real_logits = self.run_D(real_img.detach(), real_c, blur_sigma=blur_sigma)
+                training_stats.report('Loss/scores/fake', gen_logits)
+                training_stats.report('Loss/signs/fake', gen_logits.sign())
+                training_stats.report('Loss/scores/real', real_logits)
+                training_stats.report('Loss/signs/real', real_logits.sign())
+                loss_Dmain = torch.nn.functional.softplus(gen_logits - real_logits)
+                training_stats.report('Loss/D/loss', loss_Dmain)
+            with torch.autograd.profiler.record_function('Dmain_backward'):
+                loss_Dmain.mean().mul(gain).backward()
+
+        # Dreg: zero-centered gradient penalties on the real (R1) and the generated (R2) images.
+        if phase in ['Dreg', 'Dboth']:
+            with torch.autograd.profiler.record_function('Dr1r2_forward'):
+                real_img_tmp = real_img.detach().requires_grad_(True)
+                real_logits = self.run_D(real_img_tmp, real_c, blur_sigma=blur_sigma)
+                with torch.no_grad():
+                    gen_img, _gen_ws = self.run_G(gen_z, gen_c)
+                gen_img_tmp = gen_img.detach().requires_grad_(True)
+                gen_logits = self.run_D(gen_img_tmp, gen_c, blur_sigma=blur_sigma)
+                with torch.autograd.profiler.record_function('r1_r2_grads'), conv2d_gradfix.no_weight_gradients():
+                    r1_grads, r2_grads = torch.autograd.grad(outputs=[real_logits.sum(), gen_logits.sum()], inputs=[real_img_tmp, gen_img_tmp], create_graph=True, only_inputs=True)
+                r1_penalty = r1_grads.square().sum([1,2,3])
+                r2_penalty = r2_grads.square().sum([1,2,3])
+                loss_Dreg = (r1_penalty + r2_penalty) * (self.r1_gamma / 2)
+                training_stats.report('Loss/r1_penalty', r1_penalty)
+                training_stats.report('Loss/r2_penalty', r2_penalty)
+                training_stats.report('Loss/D/reg', loss_Dreg)
+            with torch.autograd.profiler.record_function('Dr1r2_backward'):
+                loss_Dreg.mean().mul(gain).backward()
+
+#----------------------------------------------------------------------------

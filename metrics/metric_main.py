@@ -89,6 +89,18 @@ def fid50k_full(opts):
     return dict(fid50k_full=fid)
 
 @register_metric
+def fd_dinov2_50k_full(opts):
+    opts.dataset_kwargs.update(max_size=None, xflip=False)
+    fd = frechet_inception_distance.compute_fd_dinov2(opts, max_real=None, num_gen=50000)
+    return dict(fd_dinov2_50k_full=fd)
+
+@register_metric
+def fd_dinov2_10k_full(opts):
+    opts.dataset_kwargs.update(max_size=None, xflip=False)
+    fd = frechet_inception_distance.compute_fd_dinov2(opts, max_real=None, num_gen=10000)
+    return dict(fd_dinov2_10k_full=fd)
+
+@register_metric
 def kid50k_full(opts):
     opts.dataset_kwargs.update(max_size=None, xflip=False)
     kid = kernel_inception_distance.compute_kid(opts, max_real=1000000, num_gen=50000, num_subsets=100, max_subset_size=1000)

@@ -130,6 +130,7 @@ def parse_comma_separated_list(s):
 @click.option('--gpus',         help='Number of GPUs to use', metavar='INT',                    type=click.IntRange(min=1), required=True)
 @click.option('--batch',        help='Total batch size', metavar='INT',                         type=click.IntRange(min=1), required=True)
 @click.option('--gamma',        help='R1 regularization weight', metavar='FLOAT',               type=click.FloatRange(min=0), required=True)
+@click.option('--loss',         help='GAN loss: StyleGAN\'s non-saturating logistic loss + R1, or R3GAN\'s relativistic pairing loss + R1 + R2 (experimental)', type=click.Choice(['stylegan', 'rpgan']), default='stylegan', show_default=True)
 
 # Optional features.
 @click.option('--cond',         help='Train conditional model', metavar='BOOL',                 type=bool, default=False, show_default=True)
@@ -211,6 +212,8 @@ def main(**kwargs):
     c.D_kwargs.block_kwargs.freeze_layers = opts.freezed
     c.D_kwargs.epilogue_kwargs.mbstd_group_size = opts.mbstd_group
     c.loss_kwargs.r1_gamma = opts.gamma
+    if opts.loss == 'rpgan':
+        c.loss_kwargs.class_name = 'training.loss.RpGANLoss'
     c.G_opt_kwargs.lr = (0.002 if opts.cfg == 'stylegan2' else 0.0025) if opts.glr is None else opts.glr
     c.D_opt_kwargs.lr = opts.dlr
     c.metrics = opts.metrics
@@ -274,6 +277,8 @@ def main(**kwargs):
 
     # Description string.
     desc = f'{opts.cfg:s}-{dataset_name:s}-gpus{c.num_gpus:d}-batch{c.batch_size:d}-gamma{c.loss_kwargs.r1_gamma:g}'
+    if opts.loss != 'stylegan':
+        desc += f'-{opts.loss}'
     if opts.desc is not None:
         desc += f'-{opts.desc}'
 

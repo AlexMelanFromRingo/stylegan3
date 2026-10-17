@@ -10,6 +10,23 @@ Abstract: *We observe that despite their hierarchical convolutional nature, the 
 
 For business inquiries, please visit our website and submit the form: [NVIDIA Research Licensing](https://www.nvidia.com/en-us/research/inquiries/)
 
+## About this fork
+
+The official code targets Python 3.8, PyTorch 1.9 and CUDA 11.1 (2021). This fork runs on current versions
+(Python 3.12+, PyTorch 2.x, CUDA 12/13, NumPy 2, SciPy 1.18) with a plain `pip install`, without Docker or conda:
+
+- **Setup**: `pip install -r requirements.txt`. The custom CUDA kernels compile against a CUDA toolkit installed with pip
+  (no system wide CUDA installation), and when they cannot be compiled the code falls back to native PyTorch
+  implementations instead of stopping with a build error.
+- **Visualizer**: works again - ported from pyimgui (which no longer installs) to [imgui-bundle](https://github.com/pthom/imgui_bundle),
+  with fixes for Wayland / WSLg and separate-process rendering.
+- **Fixes** for current libraries: training, FID and the visualizer failed on recent versions of PyTorch, SciPy, matplotlib and Python.
+- **Speed**: less memory and time spent on bookkeeping during training, see [docs/modernization.md](./docs/modernization.md).
+- **New options**: the relativistic pairing loss of R3GAN (`--loss=rpgan`), the FD<sub>DINOv2</sub> metric (`--metrics=fd_dinov2_50k_full`).
+
+Network pickles are fully compatible in both directions. The details, measurements and the reasons behind each change are in
+[docs/modernization.md](./docs/modernization.md).
+
 ## Release notes
 
 This repository is an updated version of [stylegan2-ada-pytorch](https://github.com/NVlabs/stylegan2-ada-pytorch), with several new features:
@@ -51,19 +68,31 @@ While new generator approaches enable new media synthesis capabilities, they may
 
 ## Requirements
 
-* Linux and Windows are supported, but we recommend Linux for performance and compatibility reasons.
-* 1&ndash;8 high-end NVIDIA GPUs with at least 12 GB of memory. We have done all testing and development using Tesla V100 and A100 GPUs.
-* 64-bit Python 3.8 and PyTorch 1.9.0 (or later). See https://pytorch.org for PyTorch install instructions.
-* CUDA toolkit 11.1 or later.  (Why is a separate CUDA toolkit installation required?  See [Troubleshooting](./docs/troubleshooting.md#why-is-cuda-toolkit-installation-necessary)).
-* GCC 7 or later (Linux) or Visual Studio (Windows) compilers.  Recommended GCC version depends on CUDA version, see for example [CUDA 11.4 system requirements](https://docs.nvidia.com/cuda/archive/11.4.1/cuda-installation-guide-linux/index.html#system-requirements).
-* Python libraries: see [environment.yml](./environment.yml) for exact library dependencies.  You can use the following commands with Miniconda3 to create and activate your StyleGAN3 Python environment:
-  - `conda env create -f environment.yml`
-  - `conda activate stylegan3`
-* Docker users:
-  - Ensure you have correctly installed the [NVIDIA container runtime](https://docs.docker.com/config/containers/resource_constraints/#gpu).
-  - Use the [provided Dockerfile](./Dockerfile) to build an image with the required library dependencies.
+* Linux, Windows or WSL2 and an NVIDIA GPU. A single GPU with 8 GB of memory is enough for 256x256 models (see [Training](#training)).
+* 64-bit Python 3.9 &ndash; 3.13 and PyTorch 2.1 or later.
+* Python libraries: [requirements.txt](./requirements.txt).
 
-The code relies heavily on custom PyTorch extensions that are compiled on the fly using NVCC. On Windows, the compilation requires Microsoft Visual Studio. We recommend installing [Visual Studio Community Edition](https://visualstudio.microsoft.com/vs/) and adding it into `PATH` using `"C:\Program Files (x86)\Microsoft Visual Studio\<VERSION>\Community\VC\Auxiliary\Build\vcvars64.bat"`.
+```.bash
+python -m venv .venv && source .venv/bin/activate     # or: uv venv && source .venv/bin/activate
+pip install -r requirements.txt                       # Windows: install the CUDA build of PyTorch first, see https://pytorch.org
+```
+
+**Custom CUDA kernels.** Some layers (filtered leaky ReLU, resampling, bias + activation) use custom CUDA kernels that are
+compiled on first use and make training about 4x faster. Compiling them needs a C++ compiler (GCC on Linux, Visual Studio
+on Windows) and a CUDA toolkit whose major version matches the one PyTorch was built with (`python -c "import torch; print(torch.version.cuda)"`).
+On Linux the toolkit can simply be installed with pip, into the same environment - for a PyTorch built with CUDA 13.0:
+
+```.bash
+pip install "nvidia-cuda-nvcc==13.0.*" "nvidia-nvvm==13.0.*" "nvidia-cuda-crt==13.0.*" "nvidia-cuda-cccl==13.0.*"
+```
+
+It is found automatically, also when an older system toolkit is installed. If the kernels cannot be compiled, a warning
+names the reason (and the exact command for your PyTorch version), and native PyTorch implementations of the same ops are used:
+everything works, training is slower. Set `STYLEGAN_CUSTOM_OPS=off` to skip the compilation, or `STYLEGAN_CUSTOM_OPS=require`
+to fail instead of falling back. On Windows, install [Visual Studio Community Edition](https://visualstudio.microsoft.com/vs/)
+with the C++ workload and the [CUDA toolkit](https://developer.nvidia.com/cuda-downloads) to use the kernels.
+
+* Docker and conda still work ([Dockerfile](./Dockerfile), [environment.yml](./environment.yml)), but are not needed.
 
 See [Troubleshooting](./docs/troubleshooting.md) for help on common installation and run-time problems.
 
@@ -114,6 +143,11 @@ python visualizer.py
 ```
 
 <a href="./docs/visualizer_screen0.png"><img alt="Visualizer screenshot" src="./docs/visualizer_screen0_half.png"></img></a>
+
+Pass the path or URL of a network pickle to open it directly: `python visualizer.py ~/models/network-snapshot-001000.pkl`.
+The visualizer works on Linux (X11 and Wayland), Windows and WSL2 (WSLg, where it automatically uses the GPU through Mesa's
+D3D12 driver instead of software rendering). "Separate process" in the performance panel renders the images in a second
+process, which keeps the interface responsive with large networks.
 
 ## Using networks from Python
 
@@ -200,6 +234,32 @@ python train.py --outdir=~/training-runs --cfg=stylegan2 --data=~/datasets/ffhq-
 
 Note that the result quality and training time depend heavily on the exact set of options. The most important ones (`--gpus`, `--batch`, and `--gamma`) must be specified explicitly, and they should be selected with care. See [`python train.py --help`](./docs/train-help.txt) for the full list of options and [Training configurations](./docs/configs.md) for general guidelines &amp; recommendations, along with the expected training speed &amp; memory usage in different scenarios.
 
+### Training on a single GPU
+
+The configurations of the paper use 8 GPUs, but `--gpus` does not change the training dynamics: on one GPU, the same
+`--batch` is processed in several passes of `--batch-gpu` images with gradient accumulation. For example, on one 16 GB GPU:
+
+```.bash
+# StyleGAN3-T at 256x256, ~65 s/kimg on an RTX 4080 SUPER, 5.6 GB of GPU memory.
+python train.py --outdir=~/training-runs --cfg=stylegan3-t --data=~/datasets/mydata-256x256.zip \
+    --gpus=1 --batch=16 --batch-gpu=8 --gamma=2 --mirror=1 --snap=10
+```
+
+* `--batch-gpu=8` instead of 16 is nearly as fast (66 vs 65 s/kimg above) with half the memory. On Windows and WSL2, running
+  close to the memory limit does not fail but slows training down a lot (the driver moves memory to the system RAM),
+  so leave some headroom.
+* A smaller `--batch` usually needs a larger `--gamma` and/or a lower `--dlr`, see [Training configurations](./docs/configs.md).
+* Without the custom CUDA kernels (see [Requirements](#requirements)) training is about 4x slower and needs more memory.
+
+### Relativistic pairing loss (experimental)
+
+`--loss=rpgan` replaces the non-saturating logistic loss with the relativistic pairing loss of
+[R3GAN](https://arxiv.org/abs/2501.05441) ("The GAN is dead; long live the GAN!", NeurIPS 2024): every generated image is
+scored relative to a real image of the minibatch, and the zero-centered gradient penalty is applied to both the real (R1)
+and the generated (R2) images, with the same `--gamma`. The paper proves local convergence for this loss and reports less
+mode dropping. Only the loss is taken from R3GAN, the architectures stay those of StyleGAN. It has not been validated on
+long training runs with these architectures yet - compare it against the default loss on your data.
+
 The results of each training run are saved to a newly created directory, for example `~/training-runs/00000-stylegan3-t-afhqv2-512x512-gpus8-batch32-gamma8.2`. The training loop exports network pickles (`network-snapshot-<KIMG>.pkl`) and random image grids (`fakes<KIMG>.png`) at regular intervals (controlled by `--snap`). For each exported pickle, it evaluates FID (controlled by `--metrics`) and logs the result in `metric-fid50k_full.jsonl`. It also records various statistics in `training_stats.jsonl`, as well as `*.tfevents` if TensorBoard is installed.
 
 ## Quality metrics
@@ -230,6 +290,7 @@ Recommended metrics:
 * `eqt50k_int`: Equivariance<sup>[5]</sup> w.r.t. integer translation (EQ-T).
 * `eqt50k_frac`: Equivariance w.r.t. fractional translation (EQ-T<sub>frac</sub>).
 * `eqr50k`: Equivariance w.r.t. rotation (EQ-R).
+* `fd_dinov2_50k_full`: Fr&eacute;chet distance in the feature space of DINOv2 ViT-L/14<sup>[7]</sup> against the full dataset (`fd_dinov2_10k_full`: with 10k generated images, faster). Agrees much better with human judgments of image quality than FID, which relies on Inception-v3 features. The values are not comparable to FID. Downloads DINOv2 through `torch.hub` on first use (~1.2 GB).
 
 Legacy metrics:
 * `fid50k`: Fr&eacute;chet inception distance against 50k real images.
@@ -244,6 +305,7 @@ References:
 4. [A Style-Based Generator Architecture for Generative Adversarial Networks](https://arxiv.org/abs/1812.04948), Karras et al. 2018
 5. [Alias-Free Generative Adversarial Networks](https://nvlabs.github.io/stylegan3), Karras et al. 2021
 6. [Improved Techniques for Training GANs](https://arxiv.org/abs/1606.03498), Salimans et al. 2016
+7. [Exposing flaws of generative model evaluation metrics and their unfair treatment of diffusion models](https://arxiv.org/abs/2306.04675), Stein et al. 2023
 
 ## Spectral analysis
 
