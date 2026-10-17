@@ -33,19 +33,21 @@ activation_funcs = {
 #----------------------------------------------------------------------------
 
 _plugin = None
+_plugin_tried = False
 _null_tensor = torch.empty([0])
 
 def _init():
-    global _plugin
-    if _plugin is None:
-        _plugin = custom_ops.get_plugin(
+    global _plugin, _plugin_tried
+    if not _plugin_tried:
+        _plugin_tried = True
+        _plugin = custom_ops.try_get_plugin(
             module_name='bias_act_plugin',
             sources=['bias_act.cpp', 'bias_act.cu'],
             headers=['bias_act.h'],
             source_dir=os.path.dirname(__file__),
             extra_cuda_cflags=['--use_fast_math', '--allow-unsupported-compiler'],
         )
-    return True
+    return _plugin is not None
 
 #----------------------------------------------------------------------------
 

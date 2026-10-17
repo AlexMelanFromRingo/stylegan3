@@ -19,18 +19,20 @@ from . import conv2d_gradfix
 #----------------------------------------------------------------------------
 
 _plugin = None
+_plugin_tried = False
 
 def _init():
-    global _plugin
-    if _plugin is None:
-        _plugin = custom_ops.get_plugin(
+    global _plugin, _plugin_tried
+    if not _plugin_tried:
+        _plugin_tried = True
+        _plugin = custom_ops.try_get_plugin(
             module_name='upfirdn2d_plugin',
             sources=['upfirdn2d.cpp', 'upfirdn2d.cu'],
             headers=['upfirdn2d.h'],
             source_dir=os.path.dirname(__file__),
             extra_cuda_cflags=['--use_fast_math', '--allow-unsupported-compiler'],
         )
-    return True
+    return _plugin is not None
 
 def _parse_scaling(scaling):
     if isinstance(scaling, int):
@@ -101,7 +103,7 @@ def setup_filter(f, device=torch.device('cpu'), normalize=True, flip_filter=Fals
     if separable is None:
         separable = (f.ndim == 1 and f.numel() >= 8)
     if f.ndim == 1 and not separable:
-        f = f.ger(f)
+        f = torch.outer(f, f)
     assert f.ndim == (1 if separable else 2)
 
     # Apply normalize, flip, gain, and device.
@@ -150,15 +152,19 @@ def upfirdn2d(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1, impl='cu
                      (default: 0).
         flip_filter: False = convolution, True = correlation (default: False).
         gain:        Overall scaling factor for signal magnitude (default: 1).
-        impl:        Implementation to use. Can be `'ref'` or `'cuda'` (default: `'cuda'`).
+        impl:        Implementation to use. Can be `'ref'`, `'native'` or `'cuda'` (default: `'cuda'`).
+                     `'cuda'` uses the compiled CUDA kernels when they are available, and the
+                     native implementation otherwise.
 
     Returns:
         Tensor of the shape `[batch_size, num_channels, out_height, out_width]`.
     """
     assert isinstance(x, torch.Tensor)
-    assert impl in ['ref', 'cuda']
+    assert impl in ['ref', 'native', 'cuda']
     if impl == 'cuda' and x.device.type == 'cuda' and _init():
         return _upfirdn2d_cuda(up=up, down=down, padding=padding, flip_filter=flip_filter, gain=gain).apply(x, f)
+    if impl in ['cuda', 'native']:
+        return _upfirdn2d_native(up=up, down=down, padding=padding, flip_filter=flip_filter, gain=gain).apply(x, f)
     return _upfirdn2d_ref(x, f, up=up, down=down, padding=padding, flip_filter=flip_filter, gain=gain)
 
 #----------------------------------------------------------------------------
@@ -271,6 +277,123 @@ def _upfirdn2d_cuda(up=1, down=1, padding=0, flip_filter=False, gain=1):
     # Add to cache.
     _upfirdn2d_cuda_cache[key] = Upfirdn2dCuda
     return Upfirdn2dCuda
+
+#----------------------------------------------------------------------------
+# Native PyTorch implementation, used when the CUDA kernels are not available. Faster and much more memory efficient
+# than the reference implementation: upsampling uses a transposed convolution instead of materializing the zero-stuffed
+# image, downsampling a strided convolution that only computes the kept pixels, and separable filters are applied as two
+# 1D passes. Like the CUDA op, the backward pass is the same op with transposed parameters, so gradients of any order are
+# computed without going through PyTorch's (very slow) double backward of grouped convolutions.
+
+def _upfirdn2d_pass(x, f, up, down, pad0, pad1, gain, dim):
+    """One pass over the height (dim=2), the width (dim=3), or both (dim=None, 2D filter). `f` is a correlation kernel,
+    `up`, `down`, `pad0` and `pad1` are (y, x) pairs."""
+    batch_size, num_channels, in_height, in_width = x.shape
+    w = f if dim is None else (f.unsqueeze(0) if dim == 3 else f.unsqueeze(1))
+    kh, kw = w.shape
+    (uy, ux), (dy, dx), (py0, px0), (py1, px1) = up, down, pad0, pad1
+
+    # Every channel is filtered with the same kernel: fold the channels into the batch dimension.
+    x = x.reshape(batch_size * num_channels, 1, in_height, in_width)
+    w = (w * gain).to(x.dtype)[np.newaxis, np.newaxis]
+
+    if uy == ux == 1:
+        x = torch.nn.functional.pad(x, [px0, px1, py0, py1])
+        x = torch.nn.functional.conv2d(x, w, stride=[dy, dx])
+    else:
+        # Compute the full upsampled output (of a transposed convolution), then shift it to the requested padding.
+        out_h = in_height * uy + py0 + py1 - kh + 1
+        out_w = in_width * ux + px0 + px1 - kw + 1
+        x = _polyphase_conv_transpose2d(x, w[0, 0].flip([0, 1]), uy, ux)
+        sy, sx = kh - 1 - py0, kw - 1 - px0
+        x = torch.nn.functional.pad(x, [-sx, out_w + sx - x.shape[3], -sy, out_h + sy - x.shape[2]])
+        if dy > 1 or dx > 1:
+            x = x[:, :, ::dy, ::dx]
+    return x.reshape(batch_size, num_channels, *x.shape[2:])
+
+def _polyphase_conv_transpose2d(x, w, uy, ux):
+    """`conv_transpose2d(x, w, stride=[uy, ux])` for a single channel `x` of shape [N, 1, H, W] and a kernel `w` of shape [kh, kw],
+    zero padded at the end. Computed as uy * ux ordinary convolutions, one per output phase, which are interleaved: cuDNN's
+    transposed convolutions are several times slower for these shapes."""
+    kh, kw = w.shape
+    ky, kx = -(-kh // uy), -(-kw // ux)
+    w = torch.nn.functional.pad(w, [0, kx * ux - kw, 0, ky * uy - kh])
+    phases = w.reshape(ky, uy, kx, ux).permute(1, 3, 0, 2).flip([2, 3]).reshape(uy * ux, 1, ky, kx)
+    x = torch.nn.functional.pad(x, [kx - 1, kx - 1, ky - 1, ky - 1])
+    z = torch.nn.functional.conv2d(x, phases)
+    n, _, zh, zw = z.shape
+    return z.reshape(n, uy, ux, zh, zw).permute(0, 3, 1, 4, 2).reshape(n, 1, zh * uy, zw * ux)
+
+def _upfirdn2d_conv(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1):
+    upx, upy = _parse_scaling(up)
+    downx, downy = _parse_scaling(down)
+    padx0, padx1, pady0, pady1 = _parse_padding(padding)
+    if f is None:
+        f = torch.ones([1, 1], dtype=torch.float32, device=x.device)
+    if not flip_filter:
+        f = f.flip(list(range(f.ndim))) # upfirdn2d convolves, conv2d computes a correlation
+    if f.ndim == 2:
+        return _upfirdn2d_pass(x, f, (upy, upx), (downy, downx), (pady0, padx0), (pady1, padx1), gain, dim=None)
+    x = _upfirdn2d_pass(x, f, (1, upx), (1, downx), (0, padx0), (0, padx1), 1, dim=3)
+    return _upfirdn2d_pass(x, f, (upy, 1), (downy, 1), (pady0, 0), (pady1, 0), gain, dim=2)
+
+def _upfirdn2d_native_transpose(dy, f, x_shape, up=1, down=1, padding=0, flip_filter=False, gain=1):
+    """Gradient of `upfirdn2d(x, f, up, down, padding, flip_filter, gain)` with respect to `x` of shape `x_shape`,
+    for the output gradient `dy`. Differentiable, as it is again an upfirdn2d op."""
+    upx, upy = _parse_scaling(up)
+    downx, downy = _parse_scaling(down)
+    padx0, padx1, pady0, pady1 = _parse_padding(padding)
+    if f is not None and f.ndim == 1 and f.shape[0] == 1:
+        f = f.square().unsqueeze(0)
+    _, _, ih, iw = x_shape
+    _, _, oh, ow = dy.shape
+    fw, fh = _get_filter_size(f)
+    p = [
+        fw - padx0 - 1,
+        iw * upx - ow * downx + padx0 - upx + 1,
+        fh - pady0 - 1,
+        ih * upy - oh * downy + pady0 - upy + 1,
+    ]
+    return _upfirdn2d_native(up=[downx, downy], down=[upx, upy], padding=p, flip_filter=(not flip_filter), gain=gain).apply(dy, f)
+
+_upfirdn2d_native_cache = dict()
+
+def _upfirdn2d_native(up=1, down=1, padding=0, flip_filter=False, gain=1):
+    """Native PyTorch implementation of `upfirdn2d()` with gradients of arbitrary order.
+    """
+    upx, upy = _parse_scaling(up)
+    downx, downy = _parse_scaling(down)
+    padx0, padx1, pady0, pady1 = _parse_padding(padding)
+
+    key = (upx, upy, downx, downy, padx0, padx1, pady0, pady1, flip_filter, gain)
+    if key in _upfirdn2d_native_cache:
+        return _upfirdn2d_native_cache[key]
+
+    class Upfirdn2dNative(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x, f): # pylint: disable=arguments-differ
+            assert isinstance(x, torch.Tensor) and x.ndim == 4
+            if f is None:
+                f = torch.ones([1, 1], dtype=torch.float32, device=x.device)
+            if f.ndim == 1 and f.shape[0] == 1:
+                f = f.square().unsqueeze(0) # Convert separable-1 into full-1x1.
+            assert isinstance(f, torch.Tensor) and f.ndim in [1, 2]
+            y = _upfirdn2d_conv(x, f, up=[upx, upy], down=[downx, downy], padding=[padx0, padx1, pady0, pady1], flip_filter=flip_filter, gain=gain)
+            ctx.save_for_backward(f)
+            ctx.x_shape = x.shape
+            return y
+
+        @staticmethod
+        def backward(ctx, dy): # pylint: disable=arguments-differ
+            f, = ctx.saved_tensors
+            dx = None
+            if ctx.needs_input_grad[0]:
+                dx = _upfirdn2d_native_transpose(dy, f, ctx.x_shape, up=[upx, upy], down=[downx, downy], padding=[padx0, padx1, pady0, pady1], flip_filter=flip_filter, gain=gain)
+            assert not ctx.needs_input_grad[1]
+            return dx, None
+
+    _upfirdn2d_native_cache[key] = Upfirdn2dNative
+    return Upfirdn2dNative
 
 #----------------------------------------------------------------------------
 

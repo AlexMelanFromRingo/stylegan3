@@ -8,7 +8,7 @@
 
 import array
 import numpy as np
-import imgui
+from gui_utils import imgui_compat as imgui
 from gui_utils import imgui_utils
 
 #----------------------------------------------------------------------------

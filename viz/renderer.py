@@ -212,7 +212,7 @@ class Renderer:
     def _apply_cmap(self, x, name='viridis'):
         cmap = self._cmaps.get(name, None)
         if cmap is None:
-            cmap = matplotlib.cm.get_cmap(name)
+            cmap = matplotlib.colormaps[name] # matplotlib.cm.get_cmap() was removed in matplotlib 3.9
             cmap = cmap(np.linspace(0, 1, num=1024), bytes=True)[:, :3]
             cmap = self.to_device(torch.from_numpy(cmap))
             self._cmaps[name] = cmap

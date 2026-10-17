@@ -7,7 +7,7 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import contextlib
-import imgui
+from . import imgui_compat as imgui
 
 #----------------------------------------------------------------------------
 

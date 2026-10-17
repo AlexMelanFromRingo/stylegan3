@@ -11,7 +11,7 @@ import os
 
 import multiprocessing
 import numpy as np
-import imgui
+from gui_utils import imgui_compat as imgui
 import dnnlib
 from gui_utils import imgui_window
 from gui_utils import imgui_utils
@@ -193,6 +193,9 @@ class AsyncRenderer:
         if self._process is not None:
             self._process.terminate()
         self._process = None
+        for queue in (self._args_queue, self._result_queue):
+            if queue is not None:
+                queue.cancel_join_thread() # do not wait at exit for data that the terminated process will never read
         self._args_queue = None
         self._result_queue = None
 
@@ -214,13 +217,11 @@ class AsyncRenderer:
 
     def _set_args_async(self, **args):
         if self._process is None:
-            self._args_queue = multiprocessing.Queue()
-            self._result_queue = multiprocessing.Queue()
-            try:
-                multiprocessing.set_start_method('spawn')
-            except RuntimeError:
-                pass
-            self._process = multiprocessing.Process(target=self._process_fn, args=(self._args_queue, self._result_queue), daemon=True)
+            # A spawn context of its own: CUDA cannot be used in a forked process, and the global start method may already be set.
+            ctx = multiprocessing.get_context('spawn')
+            self._args_queue = ctx.Queue()
+            self._result_queue = ctx.Queue()
+            self._process = ctx.Process(target=self._process_fn, args=(self._args_queue, self._result_queue), daemon=True)
             self._process.start()
         self._args_queue.put([args, self._cur_stamp])
 

@@ -12,8 +12,22 @@ equilibrium". Matches the original implementation by Heusel et al. at
 https://github.com/bioinf-jku/TTUR/blob/master/fid.py"""
 
 import numpy as np
-import scipy.linalg
+import torch
 from . import metric_utils
+
+#----------------------------------------------------------------------------
+
+def frechet_distance(mu1, sigma1, mu2, sigma2):
+    """||mu1 - mu2||^2 + tr(sigma1 + sigma2 - 2 sqrt(sigma1 sigma2)).
+    The trace of the matrix square root is the sum of the square roots of the eigenvalues of
+    sqrt(sigma1) sigma2 sqrt(sigma1), a symmetric matrix with the same eigenvalues as sigma1 sigma2.
+    Same result as scipy.linalg.sqrtm, much faster, and independent of the scipy version
+    (sqrtm's `disp` argument, used here before, was removed in scipy 1.18)."""
+    mu1, sigma1, mu2, sigma2 = (torch.as_tensor(t, dtype=torch.float64) for t in (mu1, sigma1, mu2, sigma2))
+    eigvals, eigvecs = torch.linalg.eigh(sigma1)
+    sqrt_sigma1 = (eigvecs * eigvals.clamp(min=0).sqrt()) @ eigvecs.T
+    trace_covmean = torch.linalg.eigvalsh(sqrt_sigma1 @ sigma2 @ sqrt_sigma1).clamp(min=0).sqrt().sum()
+    return float((mu1 - mu2).square().sum() + sigma1.trace() + sigma2.trace() - 2 * trace_covmean)
 
 #----------------------------------------------------------------------------
 
@@ -33,9 +47,6 @@ def compute_fid(opts, max_real, num_gen):
     if opts.rank != 0:
         return float('nan')
 
-    m = np.square(mu_gen - mu_real).sum()
-    s, _ = scipy.linalg.sqrtm(np.dot(sigma_gen, sigma_real), disp=False) # pylint: disable=no-member
-    fid = np.real(m + np.trace(sigma_gen + sigma_real - s * 2))
-    return float(fid)
+    return frechet_distance(mu_gen, sigma_gen, mu_real, sigma_real)
 
 #----------------------------------------------------------------------------

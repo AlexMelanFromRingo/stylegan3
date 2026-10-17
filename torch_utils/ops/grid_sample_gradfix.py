@@ -12,7 +12,7 @@ Only works on 2D images and assumes
 `mode='bilinear'`, `padding_mode='zeros'`, `align_corners=False`."""
 
 import torch
-from pkg_resources import parse_version
+from .. import misc
 
 # pylint: disable=redefined-builtin
 # pylint: disable=arguments-differ
@@ -21,8 +21,8 @@ from pkg_resources import parse_version
 #----------------------------------------------------------------------------
 
 enabled = False  # Enable the custom op by setting this to true.
-_use_pytorch_1_11_api = parse_version(torch.__version__) >= parse_version('1.11.0a') # Allow prerelease builds of 1.11
-_use_pytorch_1_12_api = parse_version(torch.__version__) >= parse_version('1.12.0a') # Allow prerelease builds of 1.12
+_use_pytorch_1_11_api = misc.torch_version_at_least(1, 11) # Allow prerelease builds of 1.11
+_use_pytorch_1_12_api = misc.torch_version_at_least(1, 12) # Allow prerelease builds of 1.12
 
 #----------------------------------------------------------------------------
 

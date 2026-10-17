@@ -7,7 +7,7 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import numpy as np
-import imgui
+from gui_utils import imgui_compat as imgui
 import dnnlib
 from gui_utils import imgui_utils
 

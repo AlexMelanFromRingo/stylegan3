@@ -193,6 +193,9 @@ def training_loop(
     loss = dnnlib.util.construct_class_by_name(device=device, G=G, D=D, augment_pipe=augment_pipe, **loss_kwargs) # subclass of training.loss.Loss
     phases = []
     for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval)]:
+        opt_kwargs = dnnlib.EasyDict(opt_kwargs)
+        if 'betas' in opt_kwargs:
+            opt_kwargs.betas = [float(beta) for beta in opt_kwargs.betas] # torch.optim requires both betas to be floats, e.g. not [0, 0.99]
         if reg_interval is None:
             opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'both', module=module, opt=opt, interval=1)]

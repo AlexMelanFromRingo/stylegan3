@@ -336,7 +336,7 @@ class AugmentPipe(torch.nn.Module):
             i = torch.where(torch.rand([batch_size, 1, 1], device=device) < self.lumaflip * self.p, i, torch.zeros_like(i))
             if debug_percentile is not None:
                 i = torch.full_like(i, torch.floor(debug_percentile * 2))
-            C = (I_4 - 2 * v.ger(v) * i) @ C # Householder reflection.
+            C = (I_4 - 2 * torch.outer(v, v) * i) @ C # Householder reflection.
 
         # Apply hue rotation with probability (hue * strength).
         if self.hue > 0 and num_channels > 1:
@@ -352,7 +352,7 @@ class AugmentPipe(torch.nn.Module):
             s = torch.where(torch.rand([batch_size, 1, 1], device=device) < self.saturation * self.p, s, torch.ones_like(s))
             if debug_percentile is not None:
                 s = torch.full_like(s, torch.exp2(torch.erfinv(debug_percentile * 2 - 1) * self.saturation_std))
-            C = (v.ger(v) + (I_4 - v.ger(v)) * s) @ C
+            C = (torch.outer(v, v) + (I_4 - torch.outer(v, v)) * s) @ C
 
         # ------------------------------
         # Execute color transformations.

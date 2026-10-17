@@ -9,7 +9,7 @@
 import os
 import re
 import numpy as np
-import imgui
+from gui_utils import imgui_compat as imgui
 import PIL.Image
 from gui_utils import imgui_utils
 from . import renderer

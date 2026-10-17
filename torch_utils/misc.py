@@ -14,6 +14,13 @@ import warnings
 import dnnlib
 
 #----------------------------------------------------------------------------
+# PyTorch version check (prerelease builds such as 1.11.0a count as 1.11).
+
+def torch_version_at_least(major, minor):
+    version = tuple(int(v) for v in re.findall(r'\d+', torch.__version__)[:2])
+    return version >= (major, minor)
+
+#----------------------------------------------------------------------------
 # Cached construction of constant tensors. Avoids CPU=>GPU copy when the
 # same constant is used multiple times.
 
@@ -114,7 +121,7 @@ class InfiniteSampler(torch.utils.data.Sampler):
         assert num_replicas > 0
         assert 0 <= rank < num_replicas
         assert 0 <= window_size <= 1
-        super().__init__(dataset)
+        super().__init__() # Sampler no longer takes the dataset in recent PyTorch versions
         self.dataset = dataset
         self.rank = rank
         self.num_replicas = num_replicas

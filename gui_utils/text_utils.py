@@ -7,6 +7,7 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import functools
+import os
 from typing import Optional
 
 import dnnlib
@@ -20,6 +21,14 @@ from . import gl_utils
 #----------------------------------------------------------------------------
 
 def get_default_font():
+    # Prefer the font shipped with imgui-bundle, so that the visualizer starts without network access.
+    try:
+        import imgui_bundle # pylint: disable=import-outside-toplevel
+        font = os.path.join(os.path.dirname(imgui_bundle.__file__), 'assets', 'fonts', 'Roboto', 'Roboto-Regular.ttf')
+        if os.path.isfile(font):
+            return font
+    except ImportError:
+        pass
     url = 'http://fonts.gstatic.com/s/opensans/v17/mem8YaGs126MiZpBA-U1UpcaXcl0Aw.ttf' # Open Sans regular
     return dnnlib.util.open_url(url, return_filename=True)
 

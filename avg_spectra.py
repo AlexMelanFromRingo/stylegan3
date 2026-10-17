@@ -156,7 +156,7 @@ def calc(source, dest, mean, std, num, seed, beta, interp, device=torch.device('
     # Setup window function.
     window = torch.kaiser_window(image_size, periodic=False, beta=beta, device=device)
     window *= window.square().sum().rsqrt()
-    window = window.ger(window).unsqueeze(0).unsqueeze(1)
+    window = torch.outer(window, window).unsqueeze(0).unsqueeze(1)
 
     # Accumulate power spectrum.
     spectrum = torch.zeros([spectrum_size, spectrum_size], dtype=torch.float64, device=device)

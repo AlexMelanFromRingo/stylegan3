@@ -11,7 +11,7 @@ import os
 import re
 
 import dnnlib
-import imgui
+from gui_utils import imgui_compat as imgui
 import numpy as np
 from gui_utils import imgui_utils
 

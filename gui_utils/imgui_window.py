@@ -7,10 +7,10 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import os
-import imgui
-import imgui.integrations.glfw
+from imgui_bundle.python_backends import glfw_backend
 
 from . import glfw_window
+from . import imgui_compat as imgui
 from . import imgui_utils
 from . import text_utils
 
@@ -26,7 +26,8 @@ class ImguiWindow(glfw_window.GlfwWindow):
         # Init fields.
         self._imgui_context  = None
         self._imgui_renderer = None
-        self._imgui_fonts    = None
+        self._imgui_font     = None
+        self._font_sizes     = sorted(font_sizes)
         self._cur_font_size  = max(font_sizes)
 
         # Delete leftover imgui.ini to avoid unexpected behavior.
@@ -37,14 +38,15 @@ class ImguiWindow(glfw_window.GlfwWindow):
         self._imgui_context = imgui.create_context()
         self._imgui_renderer = _GlfwRenderer(self._glfw_window)
         self._attach_glfw_callbacks()
-        imgui.get_io().ini_saving_rate = 0 # Disable creating imgui.ini at runtime.
+        imgui.get_io().set_ini_filename(None) # Do not create imgui.ini.
         imgui.get_io().mouse_drag_threshold = 0 # Improve behavior with imgui_utils.drag_custom().
-        self._imgui_fonts = {size: imgui.get_io().fonts.add_font_from_file_ttf(font, size) for size in font_sizes}
-        self._imgui_renderer.refresh_font_texture()
+
+        # Dear ImGui >= 1.92 renders a font at any size, so a single font is loaded and its size is chosen every frame.
+        self._imgui_font = imgui.get_io().fonts.add_font_from_file_ttf(font, float(self._cur_font_size))
 
     def close(self):
         self.make_context_current()
-        self._imgui_fonts = None
+        self._imgui_font = None
         if self._imgui_renderer is not None:
             self._imgui_renderer.shutdown()
             self._imgui_renderer = None
@@ -66,7 +68,7 @@ class ImguiWindow(glfw_window.GlfwWindow):
         return round(self._cur_font_size * 0.4)
 
     def set_font_size(self, target): # Applied on next frame.
-        self._cur_font_size = min((abs(key - target), key) for key in self._imgui_fonts.keys())[1]
+        self._cur_font_size = min((abs(key - target), key) for key in self._font_sizes)[1]
 
     def begin_frame(self):
         # Begin glfw frame.
@@ -79,7 +81,7 @@ class ImguiWindow(glfw_window.GlfwWindow):
 
         # Begin imgui frame.
         imgui.new_frame()
-        imgui.push_font(self._imgui_fonts[self._cur_font_size])
+        imgui.push_font(self._imgui_font, self._cur_font_size)
         imgui_utils.set_default_style(spacing=self.spacing, indent=self.font_size, scrollbar=self.font_size+4)
 
     def end_frame(self):
@@ -92,12 +94,12 @@ class ImguiWindow(glfw_window.GlfwWindow):
 #----------------------------------------------------------------------------
 # Wrapper class for GlfwRenderer to fix a mouse wheel bug on Linux.
 
-class _GlfwRenderer(imgui.integrations.glfw.GlfwRenderer):
+class _GlfwRenderer(glfw_backend.GlfwRenderer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.mouse_wheel_multiplier = 1
 
     def scroll_callback(self, window, x_offset, y_offset):
-        self.io.mouse_wheel += y_offset * self.mouse_wheel_multiplier
+        self.io.add_mouse_wheel_event(x_offset, y_offset * self.mouse_wheel_multiplier)
 
 #----------------------------------------------------------------------------

@@ -6,10 +6,16 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
+import os
+import sys
 import time
 import glfw
+
 import OpenGL.GL as gl
 from . import gl_utils
+
+# GLFW >= 3.4 prefers Wayland when it is available, but PyOpenGL is set up for GLX when there is an X display (see __init__.py).
+_use_x11 = sys.platform.startswith('linux') and hasattr(glfw, 'PLATFORM_X11') and os.environ.get('PYOPENGL_PLATFORM') == 'glx'
 
 #----------------------------------------------------------------------------
 
@@ -30,6 +36,8 @@ class GlfwWindow: # pylint: disable=too-many-public-methods
         self._captured_frame        = None
 
         # Create window.
+        if _use_x11:
+            glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)
         glfw.init()
         glfw.window_hint(glfw.VISIBLE, False)
         self._glfw_window = glfw.create_window(width=window_width, height=window_height, title=title, monitor=None, share=None)
