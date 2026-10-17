@@ -215,17 +215,19 @@ def _filtered_lrelu_native(up=1, down=1, padding=0, gain=np.sqrt(2), slope=0.2, 
 
             # Upsample. Skipped for the identity, e.g. in ToRGB layers.
             y = x if is_identity(fu, up, [px0, px1, py0, py1]) else upfirdn2d._upfirdn2d_conv(x, fu, **up_kwargs)
+            if y is x and b is None:
+                y = y.clone() # the activation below works in place
 
-            # Gain, leaky ReLU, clamp.
-            y = y * gain
+            # Gain, leaky ReLU, clamp - in place, the upsampled tensor is the largest one.
+            y.mul_(gain)
             neg = None
             if slope != 1:
                 neg = y < 0
-                y = torch.where(neg, y * slope, y)
+                torch.nn.functional.leaky_relu_(y, slope)
             clamped = None
             if clamp is not None:
-                clamped = y.abs() > clamp
-                y = y.clamp(-clamp, clamp)
+                clamped = (y > clamp) | (y < -clamp)
+                y.clamp_(-clamp, clamp)
 
             # Downsample.
             out = y if is_identity(fd, down, [0, 0, 0, 0]) else upfirdn2d._upfirdn2d_conv(y, fd, **down_kwargs)
@@ -250,10 +252,12 @@ def _filtered_lrelu_native(up=1, down=1, padding=0, gain=np.sqrt(2), slope=0.2, 
 
                 # Gradient of the activation: gain, times slope where negative, zero where clamped.
                 codes = _unpack_codes(codes, ctx.y_shape[-1])
-                scale = torch.where((codes & 1).bool(), gain * slope, gain).to(dy.dtype)
+                scale = torch.where((codes & 1).bool(), dy.new_tensor(gain * slope), dy.new_tensor(gain)) # in the dtype of dy, not float32
                 if clamp is not None:
-                    scale = scale.masked_fill((codes & 2).bool(), 0)
-                dy = dy * scale
+                    scale.masked_fill_((codes & 2).bool(), 0)
+                del codes
+                dy = dy * scale if torch.is_grad_enabled() or dy is dout else dy.mul_(scale) # in place unless a double backward needs it
+                del scale
 
                 # Gradient of the upsampling.
                 dx = dy if is_identity(fu, up, [px0, px1, py0, py1]) else upfirdn2d._upfirdn2d_native_transpose(dy, fu, ctx.x_shape, **up_kwargs)

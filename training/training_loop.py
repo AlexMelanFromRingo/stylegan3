@@ -196,6 +196,8 @@ def training_loop(
         opt_kwargs = dnnlib.EasyDict(opt_kwargs)
         if 'betas' in opt_kwargs:
             opt_kwargs.betas = [float(beta) for beta in opt_kwargs.betas] # torch.optim requires both betas to be floats, e.g. not [0, 0.99]
+        if opt_kwargs.get('class_name') in ['torch.optim.Adam', 'torch.optim.AdamW'] and device.type == 'cuda':
+            opt_kwargs.setdefault('fused', True) # The whole update in a few kernels instead of several per parameter.
         if reg_interval is None:
             opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'both', module=module, opt=opt, interval=1)]
@@ -305,10 +307,9 @@ def training_loop(
             if ema_rampup is not None:
                 ema_nimg = min(ema_nimg, cur_nimg * ema_rampup)
             ema_beta = 0.5 ** (batch_size / max(ema_nimg, 1e-8))
-            for p_ema, p in zip(G_ema.parameters(), G.parameters()):
-                p_ema.copy_(p.lerp(p_ema, ema_beta))
-            for b_ema, b in zip(G_ema.buffers(), G.buffers()):
-                b_ema.copy_(b)
+            # Same as p_ema.copy_(p.lerp(p_ema, ema_beta)) for every parameter, as a few multi-tensor kernels.
+            torch._foreach_lerp_(list(G_ema.parameters()), list(G.parameters()), 1 - ema_beta) # pylint: disable=protected-access
+            torch._foreach_copy_(list(G_ema.buffers()), list(G.buffers())) # pylint: disable=protected-access
 
         # Update state.
         cur_nimg += batch_size
